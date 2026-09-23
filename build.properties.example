@@ -1,0 +1,4 @@
+wtk.dir=/opt/wtk/lib
+jdk8.home=/usr/lib/jvm/java-8-openjdk-amd64
+proguard.jar=/opt/proguard/lib/proguard.jar
+server=94.159.98.141:7000

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="gtab" default="dist" basedir=".">
+	<property file="build.properties"/>
+	<property environment="env"/>
+	<property name="version" value="1.0"/>
+	<property name="server" value="94.159.98.141:7000"/>
+
+	<condition property="wtk.dir" value="${env.WTK_HOME}">
+		<isset property="env.WTK_HOME"/>
+	</condition>
+	<condition property="wtk.dir" value="${basedir}/lib">
+		<available file="${basedir}/lib/cldcapi11.jar"/>
+	</condition>
+	<property name="wtk.dir" location="${user.home}/wtk"/>
+
+	<condition property="proguard.jar" value="${env.PROGUARD_JAR}">
+		<isset property="env.PROGUARD_JAR"/>
+	</condition>
+	<property name="proguard.jar" location="lib/proguard.jar"/>
+
+	<condition property="jdk8.home" value="${env.JDK8_HOME}">
+		<isset property="env.JDK8_HOME"/>
+	</condition>
+	<property name="jdk8.home" location="/usr/lib/jvm/java-8-openjdk-amd64"/>
+	<property name="javac8" location="${jdk8.home}/bin/javac"/>
+	<property name="javap8" location="${jdk8.home}/bin/javap"/>
+
+	<path id="midp">
+		<pathelement location="${wtk.dir}/cldcapi11.jar"/>
+		<pathelement location="${wtk.dir}/midpapi20.jar"/>
+		<pathelement location="${wtk.dir}/jsr75.jar"/>
+		<pathelement location="${wtk.dir}/mmapi.jar"/>
+	</path>
+
+	<target name="clean">
+		<delete dir="build"/>
+		<delete dir="out"/>
+	</target>
+
+	<target name="init">
+		<fail message="CLDC/MIDP API not found in ${wtk.dir}: need cldcapi11.jar, midpapi20.jar, jsr75.jar, mmapi.jar. Set wtk.dir in build.properties, WTK_HOME env var, or put them into lib/">
+			<condition>
+				<not>
+					<and>
+						<available file="${wtk.dir}/cldcapi11.jar"/>
+						<available file="${wtk.dir}/midpapi20.jar"/>
+						<available file="${wtk.dir}/jsr75.jar"/>
+						<available file="${wtk.dir}/mmapi.jar"/>
+					</and>
+				</not>
+			</condition>
+		</fail>
+		<fail message="JDK 8 javac not found: ${javac8}. Set jdk8.home in build.properties or JDK8_HOME env var">
+			<condition>
+				<not>
+					<or>
+						<available file="${javac8}"/>
+						<available file="${javac8}.exe"/>
+					</or>
+				</not>
+			</condition>
+		</fail>
+		<fail message="ProGuard not found: ${proguard.jar}. Set proguard.jar in build.properties, PROGUARD_JAR env var, or put it into lib/">
+			<condition>
+				<not>
+					<available file="${proguard.jar}"/>
+				</not>
+			</condition>
+		</fail>
+		<echo message="WTK: ${wtk.dir}"/>
+		<echo message="JDK 8: ${jdk8.home}"/>
+		<echo message="ProGuard: ${proguard.jar}"/>
+	</target>
+
+	<target name="compile" depends="init,clean">
+		<mkdir dir="build/stub"/>
+		<mkdir dir="build/cls"/>
+		<javac srcdir="stub" destdir="build/stub" source="1.3" target="1.1" fork="true" executable="${javac8}"
+			includeantruntime="false" nowarn="true" bootclasspathref="midp"/>
+		<javac srcdir="src" destdir="build/cls" source="1.3" target="1.1" fork="true" executable="${javac8}"
+			includeantruntime="false" nowarn="true" encoding="UTF-8">
+			<bootclasspath>
+				<path refid="midp"/>
+				<pathelement location="build/stub"/>
+			</bootclasspath>
+		</javac>
+	</target>
+
+	<target name="jar" depends="compile">
+		<echo file="build/MANIFEST.MF">MIDlet-1: GTab,/icon.png,gtab.App
+MIDlet-Icon: /icon.png
+Nokia-MIDlet-On-Screen-Keypad: no
+MIDlet-Name: GTab
+MIDlet-Vendor: HoldFast
+MIDlet-Version: ${version}
+MicroEdition-Configuration: CLDC-1.1
+MicroEdition-Profile: MIDP-2.0
+MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read, javax.microedition.io.Connector.file.write, javax.microedition.io.Connector.socket
+GTab-Server: ${server}
+</echo>
+		<copy todir="build/cls">
+			<fileset dir="res"/>
+		</copy>
+		<jar destfile="build/raw.jar" basedir="build/cls" manifest="build/MANIFEST.MF"/>
+	</target>
+
+	<target name="obfuscate" depends="jar">
+		<mkdir dir="out"/>
+		<pathconvert property="pg.libs" refid="midp" pathsep="${line.separator}">
+			<map from="" to="-libraryjars "/>
+		</pathconvert>
+		<echo file="build/pg.pro">-injars ${basedir}/build/raw.jar
+-outjars ${basedir}/out/gtab.jar
+${pg.libs}
+-libraryjars ${basedir}/build/stub
+-microedition
+-overloadaggressively
+-repackageclasses ''
+-allowaccessmodification
+-optimizationpasses 3
+-optimizations !code/simplification/object
+-dontnote
+-keep public class gtab.App
+-keep,allowobfuscation class gtab.Light { static void on(); }
+</echo>
+		<java jar="${proguard.jar}" fork="true" failonerror="true" output="build/pg.log">
+			<arg value="@build/pg.pro"/>
+		</java>
+	</target>
+
+	<target name="check" depends="obfuscate">
+		<exec executable="bash" failonerror="true">
+			<arg value="apicheck.sh"/>
+			<arg value="out/gtab.jar"/>
+			<arg value="${wtk.dir}"/>
+			<arg value="${javap8}"/>
+		</exec>
+	</target>
+
+	<target name="dist" depends="check">
+		<length file="out/gtab.jar" property="jar.size"/>
+		<loadfile property="manifest" srcfile="build/MANIFEST.MF"/>
+		<echo file="out/gtab.jad">${manifest}MIDlet-Jar-URL: gtab.jar
+MIDlet-Jar-Size: ${jar.size}
+</echo>
+		<echo message="out/gtab.jar ${jar.size}"/>
+	</target>
+</project>
