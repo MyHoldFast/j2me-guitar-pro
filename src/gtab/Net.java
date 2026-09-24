@@ -20,6 +20,9 @@ final class Net {
 	String[] fmt = new String[PAGE], artist = new String[PAGE], title = new String[PAGE];
 	String name;
 	byte[] data;
+	App ui;
+	private volatile int gen;
+	private volatile boolean active;
 
 	Net(String hostPort) {
 		url = "socket://" + hostPort;
@@ -59,7 +62,37 @@ final class Net {
 		out = null;
 	}
 
+	void abort() {
+		if (!active) return;
+		gen++;
+		SocketConnection c = sc;
+		DataInputStream i = in;
+		DataOutputStream o = out;
+		try {
+			if (i != null) i.close();
+		} catch (Throwable e) {
+		}
+		try {
+			if (o != null) o.close();
+		} catch (Throwable e) {
+		}
+		try {
+			if (c != null) c.close();
+		} catch (Throwable e) {
+		}
+	}
+
 	private void call(int cmd, String s, int n, byte[] b) throws IOException {
+		int g = gen;
+		active = true;
+		try {
+			exchange(cmd, s, n, b, g);
+		} finally {
+			active = false;
+		}
+	}
+
+	private void exchange(int cmd, String s, int n, byte[] b, int g) throws IOException {
 		for (int attempt = 0;; attempt++) {
 			boolean sent = false;
 			try {
@@ -77,7 +110,14 @@ final class Net {
 				} else {
 					out.writeUTF(s);
 					out.writeInt(b.length);
-					out.write(b);
+					for (int o = 0; o < b.length;) {
+						int k = Math.min(1024, b.length - o);
+						if (g != gen) throw new IOException("cancel");
+						out.write(b, o, k);
+						out.flush();
+						o += k;
+						if (ui != null) ui.progress(o, b.length, true);
+					}
 				}
 				out.flush();
 				sent = true;
@@ -94,14 +134,20 @@ final class Net {
 				} else {
 					name = in.readUTF();
 					data = new byte[in.readInt()];
-					in.readFully(data);
+					for (int o = 0; o < data.length;) {
+						if (g != gen) throw new IOException("cancel");
+						int k = in.read(data, o, Math.min(1024, data.length - o));
+						if (k < 0) throw new IOException("EOF");
+						o += k;
+						if (ui != null) ui.progress(o, data.length, false);
+					}
 				}
 				return;
 			} catch (ServerError e) {
 				throw e;
 			} catch (IOException e) {
 				close();
-				if (attempt > 0 || (sent && cmd == 'C')) throw e;
+				if (g != gen || attempt > 0 || (sent && cmd == 'C')) throw e;
 			}
 		}
 	}

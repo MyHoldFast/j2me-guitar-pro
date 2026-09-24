@@ -6,8 +6,8 @@ import javax.microedition.lcdui.Graphics;
 import javax.microedition.lcdui.Image;
 import javax.microedition.lcdui.game.Sprite;
 
-final class View extends Canvas {
-	private static final int[] GLYPH = {
+final class View extends Canvas implements Fling.Target {
+	static final int[] GLYPH = {
 		0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF, 0x0AA8,
 		0x2BED, 0x6BAE, 0x3923, 0x6B6E, 0x79A7, 0x79A4, 0x396B, 0x5F7D
 	};
@@ -32,7 +32,8 @@ final class View extends Canvas {
 	private Image buf;
 	private String[] hd1, hd2;
 	private Graphics bufG;
-	private int sc, gap, stem, bot, headH, lm, ls, rm, n, w, h, sy, lines, py, moved, cur = -1;
+	private int sc, gap, stem, bot, headH, lm, ls, rm, n, w, h, sy, lines, cur = -1;
+	private final Fling fling = new Fling(this, this);
 	private boolean playing;
 	private Image[] dig;
 	private short[] bX, bLn, mX, mEX, mL, mEL, lnEnd, lnTop;
@@ -123,7 +124,9 @@ final class View extends Canvas {
 		stat = null;
 		playing = false;
 		cur = -1;
+		kBeat = -1;
 		toast = null;
+		fling.stop();
 		if (t != null) {
 			layout();
 			cur = next(-1, 1);
@@ -131,11 +134,58 @@ final class View extends Canvas {
 		repaint();
 	}
 
+	private int kBeat = -1, kFrac, kSy = -1;
+
 	synchronized void relayout() {
 		if (t == null) return;
-		int line = lineOf(sy - headH);
+		fling.stop();
+		int anchor = -1, off = 0, frac = -1;
+		if (kBeat >= 0 && kBeat < t.beats && sy == kSy) {
+			anchor = kBeat;
+			frac = kFrac;
+		} else if (lnY != null && t.beats > 0) {
+			if (cur >= 0 && cur < t.beats) {
+				int cy = headH + lnY[bLn[cur]] - sy;
+				if (cy >= 0 && cy < h) {
+					anchor = cur;
+					off = cy;
+				}
+			}
+			if (anchor < 0 && sy > headH / 2) {
+				int l0 = lineOf(sy - headH);
+				anchor = firstOnLine(l0);
+				frac = (sy - headH - lnY[l0]) * 1000 / Math.max(1, lnY[l0 + 1] - lnY[l0]);
+			}
+		}
 		layout();
-		scrollTo(line <= 0 ? 0 : headH + lnY[line]);
+		if (anchor < 0) {
+			scrollTo(0);
+			return;
+		}
+		int l = bLn[anchor], lh = lnY[l + 1] - lnY[l];
+		if (frac >= 0) {
+			scrollTo(headH + lnY[l] + lh * frac / 1000);
+			kBeat = anchor;
+			kFrac = frac;
+			kSy = sy;
+			return;
+		}
+		kBeat = -1;
+		if (off > h - lh) off = Math.max(0, h - lh);
+		scrollTo(headH + lnY[l] - off);
+	}
+
+	private int firstOnLine(int line) {
+		int lo = 0, hi = s.mCount - 1;
+		while (lo < hi) {
+			int mid = (lo + hi) >> 1;
+			if (mEL[mid] < line) lo = mid + 1;
+			else hi = mid;
+		}
+		for (int m = lo; m < s.mCount && mL[m] <= line; m++)
+			for (int k = t.mBeat[m]; k < t.mBeat[m + 1]; k++)
+				if (bLn[k] >= line) return k;
+		return -1;
 	}
 
 	protected void sizeChanged(int nw, int nh) {
@@ -1027,6 +1077,7 @@ final class View extends Canvas {
 	}
 
 	protected synchronized void keyPressed(int k) {
+		fling.stop();
 		key(k, false);
 	}
 
@@ -1130,10 +1181,17 @@ final class View extends Canvas {
 		}
 	}
 
+	public boolean scrollBy(int dy) {
+		if (t == null) return false;
+		int old = sy;
+		scrollTo(sy + dy);
+		return sy != old;
+	}
+
 	protected synchronized void pointerPressed(int x, int y) {
-		py = lyy(x, y);
-		moved = 0;
-		barDown = bar > 0 && py >= vh() - bar;
+		int ly = lyy(x, y);
+		fling.press(ly);
+		barDown = bar > 0 && ly >= vh() - bar;
 		if (barDown) {
 			pressed = Bar.hit(lx(x, y), vw(), 5);
 			repaint();
@@ -1141,11 +1199,7 @@ final class View extends Canvas {
 	}
 
 	protected synchronized void pointerDragged(int x, int y) {
-		if (barDown) return;
-		int ny = lyy(x, y);
-		moved += Math.abs(py - ny);
-		if (t != null) scrollTo(sy + py - ny);
-		py = ny;
+		if (!barDown) fling.drag(lyy(x, y));
 	}
 
 	protected synchronized void pointerReleased(int x, int y) {
@@ -1163,7 +1217,11 @@ final class View extends Canvas {
 			}
 			return;
 		}
-		if (playing || moved > 6) return;
+		if (fling.dragged()) {
+			fling.release(!playing);
+			return;
+		}
+		if (playing) return;
 		int yy = lyy(x, y) + sy - headH;
 		if (yy < 0) return;
 		int b = nearest(lineOf(yy), lx(x, y));

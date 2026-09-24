@@ -16,6 +16,7 @@ import javax.microedition.lcdui.CommandListener;
 import javax.microedition.lcdui.Display;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.Form;
+import javax.microedition.lcdui.Gauge;
 import javax.microedition.lcdui.Item;
 import javax.microedition.lcdui.ItemCommandListener;
 import javax.microedition.lcdui.StringItem;
@@ -29,16 +30,14 @@ import javax.microedition.midlet.MIDlet;
 import javax.microedition.rms.RecordStore;
 
 public final class App extends MIDlet implements CommandListener, ItemCommandListener, Runnable, PlayerListener {
-	static final int FILES = 1, TRACKS = 2, PREV = 3, NEXT = 4, MENU = 5, VIEW = 6, EXIT = 7, UP = 8, PLAY = 9, HELP = 10, TUNER = 11, CHORDS = 12, SEARCH = 13, RESULTS = 14, SETTINGS = 15, PICKDIR = 16, SHOWFILES = 17;
+	static final int FILES = 1, TRACKS = 2, PREV = 3, NEXT = 4, MENU = 5, VIEW = 6, EXIT = 7, UP = 8, PLAY = 9, HELP = 10, TUNER = 11, CHORDS = 12, SEARCH = 13, RESULTS = 14, SETTINGS = 15, PICKDIR = 16, SHOWFILES = 17, EXPORT = 18;
 	private static final int A_SOLO = 20, A_ROT = 21, A_CP = 23;
 	private static final String DEFAULT_SERVER = "94.159.98.141:7000";
 
 	private Display d;
 	private View view;
-	private final List files = new List("", List.IMPLICIT);
-	private final List tracks = new List("", List.IMPLICIT);
-	private final List menu = new List("GTab", List.IMPLICIT);
-	private final Form help = new Form(L.s("Справка", "Help"));
+	private List files, tracks, menu;
+	private Help help;
 	private final Form settings = new Form(L.s("Настройки", "Settings"));
 	private final TextField srvField = new TextField(L.s("Сервер (хост:порт)", "Server (host:port)"), "", 64, TextField.ANY);
 	private final Command saveCmd = new Command(L.s("Сохранить", "Save"), Command.OK, 1);
@@ -49,19 +48,25 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 	private final ChoiceGroup lang = new ChoiceGroup(L.s("Язык", "Language"), ChoiceGroup.POPUP,
 			new String[] { L.s("Авто", "Auto"), "Русский", "English" }, null);
 	private final StringItem dlItem = new StringItem(L.s("Папка загрузок: ", "Download folder: "), "");
-	private boolean picking, menuBuilt, menuSong;
+	private boolean picking, menuSong;
 	private final java.util.Hashtable dirSel = new java.util.Hashtable();
 	private int lastAct = SEARCH, filesSel, resSel;
 	private char pending;
+	private List expList;
+	private boolean[] expOn;
+	private final Command expCmd = new Command(L.s("Сохранить", "Save"), Command.OK, 1);
 	private volatile int op;
 	private int waitBack;
 	private final int[] acts = new int[16];
 	private boolean listed;
 	private final Command findCmd = new Command(L.s("Искать", "Search"), Command.OK, 1);
-	private final List results = new List("", List.IMPLICIT);
+	private List results;
+	private final Vector resLabels = new Vector();
 	private final TextBox query = new TextBox(L.s("Поиск: исполнитель, песня", "Search: artist, song"), "", 64, TextField.ANY);
 	private final Form wait = new Form("GTab");
 	private final StringItem waitText = new StringItem(null, "");
+	private final Gauge gauge = new Gauge(null, false, 100, 0);
+	private int lastPct = -1;
 	private final java.util.Vector resIds = new java.util.Vector();
 	private Net net;
 	private String q, dl, upPath;
@@ -85,68 +90,6 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		view = new View(this);
 		tuner = new Tuner(this);
 		chords = new Chords(this);
-		String ver = getAppProperty("MIDlet-Version");
-		help.append(new StringItem(null, L.s("GTab " + (ver == null ? "" : ver) + "\nПросмотр табулатур Guitar Pro 3/4/5\n\n"
-				+ "4/6, джойстик влево/вправо - курсор по битам\n"
-				+ "2/8, джойстик вверх/вниз - строка выше/ниже\n"
-				+ "5, джойстик - играть/стоп\n"
-				+ "7/9 - страница вверх/вниз\n"
-				+ "1/3 - предыдущая/следующая дорожка\n"
-				+ "0 - в начало\n"
-				+ "* - масштаб\n"
-				+ "# - поворот экрана\n"
-				+ "софт-клавиши - меню\n\n"
-				+ "Тач: тап ставит курсор, протяжка листает, кнопки внизу экрана.\n\n"
-				+ "Воспроизведение начинается с такта под курсором. \u00abСоло\u00bb - играть только текущую дорожку. "
-				+ "Если нет звука, проверь профиль телефона: в беззвучном режиме Java-приложениям звук запрещён.\n\n"
-				+ "Тюнер (меню) играет эталонные ноты струн по строю текущей дорожки. "
-				+ "5 - звук вкл/выкл, 2/8 - струна, 1/3 - другой строй, 4/6 - подстроить струну на полтона, 0 - сброс, "
-				+ "* - на октаву выше, # - гитара или чистый тон. Красная цифра у струны - на сколько полутонов её перестроить "
-				+ "относительно строя трека. Чистый тон на низких нотах динамик телефона почти не воспроизводит: включи октаву выше "
-				+ "и сверяй с флажолетом на 12 ладу.\n\n"
-				+ "Аккорды (меню): аппликатуры любых аккордов под строй дорожки. Открываются на аккорде, "
-				+ "подписанном над курсором. Поиск - левая софт-клавиша или #: Am7, F#m, Cmaj7, Dsus4, Bb, Hm, C/G. "
-				+ "4/6 - варианты по грифу, 1/3 - тоника, 2/8 - тип, 5 - бой, 0 - арпеджио, "
-				+ "* - строй трека или стандартный.\n\n"
-				+ "Поиск табов (меню): база gtp-tabs на сервере. Можно писать по-русски или транслитом. "
-				+ "Выбранный таб сохраняется в папку загрузок и сразу открывается. Файлы GPX/GP (Guitar Pro 6-8) в списке файлов "
-				+ "отправляются на сервер и возвращаются в формате GP5 рядом с оригиналом.\n\n"
-				+ "В \u00abНастройках\u00bb задаются адрес сервера, папка для скачанных табов и язык. Если папка не выбрана, "
-				+ "при первом скачивании откроется её выбор: зайдите в папку и нажмите \u00abСохранять сюда\u00bb.\n\n"
-				+ "Подсветка не гаснет, пока приложение на экране.\n\n"
-				+ "Кодировка названий определяется автоматически, переключить можно в меню.",
-				"GTab " + (ver == null ? "" : ver) + "\nGuitar Pro 3/4/5 tab viewer\n\n"
-				+ "4/6, joystick left/right - move cursor by beat\n"
-				+ "2/8, joystick up/down - previous/next line\n"
-				+ "5, joystick - play/stop\n"
-				+ "7/9 - page up/down\n"
-				+ "1/3 - previous/next track\n"
-				+ "0 - go to start\n"
-				+ "* - zoom\n"
-				+ "# - rotate screen\n"
-				+ "soft keys - menu\n\n"
-				+ "Touch: tap sets the cursor, drag scrolls, buttons at the bottom.\n\n"
-				+ "Playback starts from the bar under the cursor. \"Solo\" plays only the current track. "
-				+ "No sound? Check the phone profile: in silent mode Java apps are not allowed to play sound.\n\n"
-				+ "Tuner (menu) plays reference notes for the strings of the current track tuning. "
-				+ "5 - sound on/off, 2/8 - string, 1/3 - another tuning, 4/6 - retune the string by a semitone, 0 - reset, "
-				+ "* - octave up, # - guitar or pure tone. The red number next to a string shows how many semitones "
-				+ "to retune it relative to the track. Phone speakers barely play low pure tones: use octave up "
-				+ "and compare with the 12th fret harmonic.\n\n"
-				+ "Chords (menu): fingerings for any chord in the track tuning. Opens on the chord written above "
-				+ "the cursor. Search - left soft key or #: Am7, F#m, Cmaj7, Dsus4, Bb, Hm, C/G. "
-				+ "4/6 - voicings along the neck, 1/3 - root, 2/8 - type, 5 - strum, 0 - arpeggio, "
-				+ "* - track or standard tuning.\n\n"
-				+ "Search tabs (menu): the gtp-tabs database on the server. Type in English, Russian or transliteration. "
-				+ "The chosen tab is saved to the download folder and opened. GPX/GP files (Guitar Pro 6-8) in the file list "
-				+ "are sent to the server and come back as GP5 next to the original.\n\n"
-				+ "Settings: server address, download folder and language. If no folder is set, "
-				+ "the first download asks for it: open a folder and choose \"Save here\".\n\n"
-				+ "The backlight stays on while the app is on screen.\n\n"
-				+ "Title encoding is detected automatically and can be switched in the menu.")));
-		help.addCommand(back);
-		help.setCommandListener(this);
-		files.addCommand(back);
 		settings.append(srvField);
 		settings.append(dlItem);
 		dirBtn.setDefaultCommand(dirCmd);
@@ -159,20 +102,14 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		query.addCommand(findCmd);
 		query.addCommand(back);
 		query.setCommandListener(this);
-		results.addCommand(findCmd);
-		results.addCommand(back);
-		results.setCommandListener(this);
 		wait.append(waitText);
 		wait.addCommand(back);
 		wait.setCommandListener(this);
 		String sv = L.pref(1);
 		if (sv == null) sv = getAppProperty("GTab-Server");
 		net = new Net(sv == null || sv.trim().length() == 0 ? DEFAULT_SERVER : sv.trim());
+		net.ui = this;
 		dl = L.pref(2);
-		files.setCommandListener(this);
-		tracks.addCommand(back);
-		tracks.setCommandListener(this);
-		menu.setCommandListener(this);
 		try {
 			Class.forName("com.nokia.mid.ui.DeviceControl");
 			nokia = true;
@@ -206,10 +143,18 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		return p == null || p.length() == 0 ? L.AUTO : p.charAt(0) - '0';
 	}
 
+	private List list(String title, Command a, Command b) {
+		List l = new List(title, List.IMPLICIT);
+		if (a != null) l.addCommand(a);
+		if (b != null) l.addCommand(b);
+		l.setCommandListener(this);
+		return l;
+	}
+
 	private void buildMenu() {
 		boolean song = view.song() != null;
-		if (!menuBuilt || song != menuSong) {
-			menu.deleteAll();
+		if (menu == null || song != menuSong) {
+			menu = list("GTab", song ? back : exitCmd, null);
 			int i = 0;
 			if (song) {
 				item(i++, VIEW);
@@ -224,15 +169,13 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 			if (song) {
 				item(i++, A_ROT);
 				item(i++, A_CP);
+				item(i++, EXPORT);
 			}
 			item(i++, SETTINGS);
 			item(i++, HELP);
 			item(i++, EXIT);
 			if (song) lastAct = VIEW;
-			menuBuilt = true;
 			menuSong = song;
-			menu.removeCommand(song ? exitCmd : back);
-			menu.addCommand(song ? back : exitCmd);
 		} else {
 			for (int i = 0; i < menu.size(); i++) {
 				String l = label(acts[i]);
@@ -259,6 +202,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 			case TUNER: return L.s("Тюнер", "Tuner");
 			case A_ROT: return L.s("Поворот экрана", "Rotate screen");
 			case A_CP: return L.s("Кодировка 1251/1252", "Encoding 1251/1252");
+			case EXPORT: return L.s("Экспорт MIDI", "Export MIDI");
 			case SETTINGS: return L.s("Настройки", "Settings");
 			case HELP: return L.s("Справка", "Help");
 			default: return L.s("Выход", "Exit");
@@ -311,10 +255,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 				else list(dir);
 				break;
 			case PICKDIR:
-				if (!picking) {
-					picking = true;
-					files.addCommand(pickCmd);
-				}
+				picking = true;
 				list(dir);
 				break;
 			case SETTINGS:
@@ -325,11 +266,10 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 				break;
 			case TRACKS:
 				if (s == null) return;
-				tracks.deleteAll();
-				tracks.setTitle(Cp.s(s.title));
+				List tl = list(Cp.s(s.title), back, null);
 				for (int i = 0; i < s.tCount; i++)
-					tracks.append((i + 1) + ". " + Cp.s(s.tName[i]) + (s.tDrum[i] ? " (drums)" : ""), null);
-				tracks.setSelectedIndex(s.trk.index, true);
+					tl.append((i + 1) + ". " + Cp.s(s.tName[i]) + (s.tDrum[i] ? " (drums)" : ""), null);
+				tracks = tl;
 				show(tracks);
 				break;
 			case PREV:
@@ -370,12 +310,26 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 				show(query);
 				break;
 			case RESULTS:
-				show(results);
+				if (results == null) nav(SEARCH);
+				else show(results);
+				break;
+			case EXPORT:
+				if (s == null) return;
+				List el = new List(L.s("Экспорт MIDI", "Export MIDI"), List.MULTIPLE);
+				for (int i = 0; i < s.tCount; i++) el.append((i + 1) + ". " + Cp.s(s.tName[i]), null);
+				for (int i = 0; i < s.tCount; i++) el.setSelectedIndex(i, true);
+				el.addCommand(expCmd);
+				el.addCommand(back);
+				el.setCommandListener(this);
+				expList = el;
+				show(expList);
 				break;
 			case SHOWFILES:
 				show(files);
 				break;
 			case HELP:
+				if (help == null) help = new Help(this, getAppProperty("MIDlet-Version"));
+				help.top();
 				show(help);
 				break;
 			case UP:
@@ -409,6 +363,18 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 
 	public void commandAction(Command c, Displayable x) {
 		if (c == back) goBack(x);
+		else if (c == expCmd) {
+			boolean[] on = new boolean[expList.size()];
+			expList.getSelectedFlags(on);
+			int n = 0;
+			for (int i = 0; i < on.length; i++) if (on[i]) n++;
+			if (n == 0) expList.setTitle(L.s("Отметьте дорожки", "Select tracks"));
+			else {
+				expOn = on;
+				busy(L.s("Экспорт MIDI...", "Exporting MIDI..."), VIEW);
+				start("X");
+			}
+		}
 		else if (c == exitCmd) nav(EXIT);
 		else if (c == pickCmd) {
 			if (dir == null) files.setTitle(L.s("Зайдите в папку", "Open a folder first"));
@@ -423,6 +389,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 				L.save(1, v);
 				net.close();
 				net = new Net(v);
+				net.ui = this;
 			}
 			int lm = lang.getSelectedIndex();
 			if (lm >= 0 && lm != langMode()) {
@@ -434,7 +401,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 			q = query.getString().trim();
 			if (q.length() > 0) {
 				resIds.removeAllElements();
-				results.deleteAll();
+				resLabels.removeAllElements();
 				busy(L.s("Поиск...", "Searching..."), SEARCH);
 				start("Q");
 			}
@@ -495,14 +462,46 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		op++;
 		waitBack = backTo;
 		waitText.setText(m);
+		hideGauge();
 		show(wait);
+	}
+
+	private void hideGauge() {
+		lastPct = -1;
+		try {
+			if (wait.size() > 1) wait.delete(1);
+		} catch (Throwable e) {
+		}
+	}
+
+	private void waitError(String m) {
+		hideGauge();
+		waitText.setText(m);
+	}
+
+	void progress(int done, int total, boolean up) {
+		try {
+			int pct = total > 0 ? done * 100 / total : 0;
+			if (pct == lastPct) return;
+			lastPct = pct;
+			if (up && done >= total) {
+				hideGauge();
+				waitText.setText(L.s("Конвертация на сервере...", "Converting on server..."));
+				return;
+			}
+			if (wait.size() == 1) wait.append(gauge);
+			gauge.setValue(pct);
+			waitText.setText((up ? L.s("Отправка: ", "Uploading: ") : L.s("Загрузка: ", "Downloading: ")) + (done + 1023) / 1024 + " / " + (total + 1023) / 1024 + L.s(" КБ", " KB"));
+		} catch (Throwable e) {
+		}
 	}
 
 	private void goBack(Displayable x) {
 		if (x == wait) {
 			op++;
+			net.abort();
 			nav(waitBack);
-		} else if (x == query || x == settings || x == help) nav(MENU);
+		} else if (x == query || x == settings || x == expList) nav(MENU);
 		else if (x == results) {
 			resSel = Math.max(results.getSelectedIndex(), 0);
 			nav(SEARCH);
@@ -513,6 +512,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 				endPick();
 				if (p == 'D') nav(RESULTS);
 				else if (p == 'U') list(dir);
+				else if (p == 'X') nav(MENU);
 				else nav(SETTINGS);
 			} else if (dir != null) nav(UP);
 			else nav(MENU);
@@ -549,6 +549,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		else if (j.equals("D")) runFetch();
 		else if (j.equals("U")) runUpload();
 		else if (j.equals("W")) runPick();
+		else if (j.equals("X")) runExport();
 		else runOpen();
 	}
 
@@ -576,20 +577,20 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		}
 		sort(v, dir == null ? 0 : 1);
 		names.removeAllElements();
-		files.deleteAll();
-		files.setTitle((picking ? L.s("Куда сохранять: ", "Save to: ") : "") + (dir == null ? "/" : dir.substring(8)));
-		listed = true;
+		List fl = list((picking ? L.s("Куда сохранять: ", "Save to: ") : "") + (dir == null ? "/" : dir.substring(8)), back, picking ? pickCmd : null);
 		for (int i = 0; i < v.size(); i++) {
 			String nm = (String) v.elementAt(i);
 			names.addElement(nm);
-			files.append(nm, null);
+			fl.append(nm, null);
 		}
 		Object want = dirSel.get(dir == null ? "/" : dir);
 		filesSel = want == null ? 0 : Math.max(names.indexOf(want), 0);
 		if (err != null) {
 			names.addElement("..");
-			files.append(err, null);
+			fl.append(err, null);
 		}
+		files = fl;
+		listed = true;
 		show(files);
 	}
 
@@ -637,7 +638,12 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		try {
 			for (int i = 0; i < 50 && !view.isShown(); i++) Thread.sleep(40);
 			view.status("MIDI...");
-			byte[] mid = Midi.build(s, from, solo ? s.trk.index : -1);
+			boolean[] on = null;
+			if (solo) {
+				on = new boolean[s.tCount];
+				on[s.trk.index] = true;
+			}
+			byte[] mid = Midi.build(s, from, on);
 			long[] at = Midi.times(s, from);
 			p = Manager.createPlayer(new ByteArrayInputStream(mid), "audio/midi");
 			mid = null;
@@ -689,17 +695,18 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 			net.search(q, off);
 			if (my != op) return;
 			resTotal = net.total;
-			if (off > 0 && results.size() > off) results.delete(off);
 			for (int i = 0; i < net.count; i++) {
 				resIds.addElement(new Integer(net.ids[i]));
-				results.append(net.artist[i] + " - " + net.title[i] + (net.fmt[i].equals("gpx") ? " [gpx]" : ""), null);
+				resLabels.addElement(net.artist[i] + " - " + net.title[i] + (net.fmt[i].equals("gpx") ? " [gpx]" : ""));
 			}
-			if (resIds.size() < resTotal) results.append(L.s("Ещё... (", "More... (") + (resTotal - resIds.size()) + ")", null);
-			results.setTitle(resTotal == 0 ? L.s("Ничего не найдено", "Nothing found") : q + ": " + resTotal);
+			List rl = list(resTotal == 0 ? L.s("Ничего не найдено", "Nothing found") : q + ": " + resTotal, findCmd, back);
+			for (int i = 0; i < resLabels.size(); i++) rl.append((String) resLabels.elementAt(i), null);
+			if (resIds.size() < resTotal) rl.append(L.s("Ещё... (", "More... (") + (resTotal - resIds.size()) + ")", null);
+			results = rl;
 			resSel = off;
 			nav(RESULTS);
 		} catch (Throwable e) {
-			if (my == op) waitText.setText(L.s("Ошибка сети: ", "Network error: ") + e.getMessage());
+			if (my == op) waitError(L.s("Ошибка сети: ", "Network error: ") + e.getMessage());
 		}
 	}
 
@@ -712,7 +719,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		try {
 			net.fetch(fetchId);
 		} catch (Throwable e) {
-			if (my == op) waitText.setText(L.s("Ошибка: ", "Error: ") + e.getMessage());
+			if (my == op) waitError(L.s("Ошибка: ", "Error: ") + e.getMessage());
 			return;
 		}
 		if (my != op) {
@@ -741,7 +748,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 			net.data = null;
 		} catch (Throwable e) {
 			net.data = null;
-			if (my == op) waitText.setText(L.s("Ошибка: ", "Error: ") + e.getMessage());
+			if (my == op) waitError(L.s("Ошибка: ", "Error: ") + e.getMessage());
 			return;
 		}
 		if (my != op) return;
@@ -784,7 +791,53 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 		} else if (p == 'U') {
 			busy(L.s("Конвертация на сервере...", "Converting on server..."), SHOWFILES);
 			runUpload();
+		} else if (p == 'X') {
+			busy(L.s("Экспорт MIDI...", "Exporting MIDI..."), VIEW);
+			runExport();
 		} else nav(SETTINGS);
+	}
+
+	private void runExport() {
+		int my = op;
+		Song s = view.song();
+		if (s == null || expOn == null) return;
+		byte[] mid;
+		try {
+			mid = Midi.build(s, 0, expOn);
+		} catch (OutOfMemoryError e) {
+			if (my == op) waitError(L.s("Мало памяти", "Out of memory"));
+			return;
+		}
+		if (my != op) return;
+		String base = path.substring(path.lastIndexOf('/') + 1);
+		if (base.lastIndexOf('.') > 0) base = base.substring(0, base.lastIndexOf('.'));
+		StringBuffer nm = new StringBuffer(base);
+		boolean all = true;
+		for (int i = 0; i < expOn.length; i++) all &= expOn[i];
+		if (!all) {
+			char sep = '-';
+			for (int i = 0; i < expOn.length; i++) {
+				if (!expOn[i]) continue;
+				nm.append(sep).append(i + 1);
+				sep = '_';
+			}
+		}
+		String name = nm.append(".mid").toString(), url;
+		try {
+			url = save(path.substring(0, path.lastIndexOf('/') + 1), name, mid);
+		} catch (Throwable e) {
+			if (dl == null) {
+				askDir('X');
+				return;
+			}
+			try {
+				url = save(dl, name, mid);
+			} catch (Throwable e2) {
+				lostDir('X');
+				return;
+			}
+		}
+		if (my == op) waitError(L.s("Сохранено:\n", "Saved:\n") + url.substring(8));
 	}
 
 	private void askDir(char p) {
@@ -801,7 +854,7 @@ public final class App extends MIDlet implements CommandListener, ItemCommandLis
 	private void endPick() {
 		picking = false;
 		pending = 0;
-		files.removeCommand(pickCmd);
+		if (files != null) files.removeCommand(pickCmd);
 	}
 
 	private static void probe(String folder) throws java.io.IOException {

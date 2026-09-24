@@ -66,9 +66,9 @@ final class Midi {
 		return at;
 	}
 
-	static byte[] build(Song s, int from, int solo) {
+	static byte[] build(Song s, int from, boolean[] on) {
 		int nt = 1;
-		for (int k = 0; k < s.tCount; k++) if (solo < 0 || solo == k) nt++;
+		for (int k = 0; k < s.tCount; k++) if (on == null || on[k]) nt++;
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		out.write('M'); out.write('T'); out.write('h'); out.write('d');
 		i32(out, 6);
@@ -77,7 +77,7 @@ final class Midi {
 		i16(out, PPQ);
 		chunk(out, tempoTrack(s, from));
 		for (int k = 0; k < s.tCount; k++)
-			if (solo < 0 || solo == k) chunk(out, track(s, k, from));
+			if (on == null || on[k]) chunk(out, track(s, k, from));
 		return out.toByteArray();
 	}
 
